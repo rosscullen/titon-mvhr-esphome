@@ -1,0 +1,405 @@
+esphome:
+  name: mvhr
+  friendly_name: Titon MVHR
+
+esp8266:
+  board: d1_mini
+
+# Enable logging (inc. responses from MVHR Unit)
+logger:
+  level: DEBUG
+  logs:
+    uart: DEBUG
+  baud_rate: 0  # Disables ESPHome serial logging (avoids UART conflicts)
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: ****
+
+ota:
+  - platform: esphome
+    password: ****
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Mvhr Fallback Hotspot"
+    password: ****
+
+captive_portal:
+
+# UART for RS-485 communication
+uart:
+  id: uart_bus
+  tx_pin: 1  # TX (GPIO1)
+  rx_pin: 3  # RX (GPIO3)
+  baud_rate: 1200
+  parity: NONE
+  stop_bits: 1
+  debug:
+    direction: BOTH
+  
+# Sensors Various (inc Logger)
+sensor:
+
+# Thermistor 1 Temperature (stale in)
+  - platform: template
+    id: thermistor_1
+    name: "Thermistor 1 Temperature (stale in)"
+    lambda: |-
+      static float last_valid_temp = NAN;  // Store last valid temperature
+      static bool fault_active = false;    // Track fault state
+
+      // Flush old data and send request for temperature (Address 030)
+      id(uart_bus).flush();
+      id(uart_bus).write_str("0301xxxxxx\r\n");
+      delay(500); // Wait for response
+
+      // Read UART response
+      std::string response = "";
+      uint8_t c;
+      while (id(uart_bus).available()) {
+        if (id(uart_bus).read_byte(&c)) {
+          response += (char)c;
+        }
+      }
+
+      ESP_LOGD("UART", "Full response: %s", response.c_str());
+
+      // If no response is received, assume fault
+      if (response.empty()) {
+        ESP_LOGW("UART", "No data received, marking Thermistor 1 as faulty.");
+        fault_active = true;
+        id(thermistor_1_fault).publish_state(true);
+        return NAN; // Return unknown state
+      }
+
+      // Check if response contains an error "-09999"
+      size_t pos = response.find("030-");
+      if (pos != std::string::npos) {
+        ESP_LOGW("UART", "Thermistor 1 Error: Disconnected or faulty!");
+        fault_active = true;
+        id(thermistor_1_fault).publish_state(true);
+        return NAN;
+      }
+
+      // Extract valid temperature from "030+xxxxx"
+      pos = response.find("030+");
+      if (pos != std::string::npos && response.length() >= pos + 9) {
+        int temp = atoi(response.substr(pos + 4, 5).c_str());
+        float temperature = temp / 10.0;
+
+        // Ignore invalid 0°C readings
+        if (temperature == 0.0) {
+          ESP_LOGW("UART", "Ignoring invalid 0°C reading, keeping last value: %.1f°C", last_valid_temp);
+          return last_valid_temp;
+        }
+
+        // Update last valid temperature
+        last_valid_temp = temperature;
+
+        // Reset fault state if a valid temperature is received
+        if (fault_active) {
+          ESP_LOGI("UART", "Thermistor 1 recovered. Clearing fault state.");
+          fault_active = false;
+          id(thermistor_1_fault).publish_state(false);
+        }
+
+        return temperature;
+      }
+
+      // If temperature data is not found, mark sensor as faulty
+      ESP_LOGW("UART", "Temperature data not found, marking Thermistor 1 as faulty.");
+      fault_active = true;
+      id(thermistor_1_fault).publish_state(true);
+      return NAN;
+    unit_of_measurement: "°C"
+    update_interval: 30s
+
+# Thermistor 2 Temperature (Fresh in)
+  - platform: template
+    id: thermistor_2
+    name: "Thermistor 2 Temperature (Fresh in)"
+    lambda: |-
+      static float last_valid_temp = NAN;
+      static bool fault_active = false;
+
+      // Flush old data and send request for temperature (Address 031)
+      id(uart_bus).flush();
+      id(uart_bus).write_str("0311xxxxxx\r\n");
+      delay(500);
+
+      // Read UART response
+      std::string response = "";
+      uint8_t c;
+      while (id(uart_bus).available()) {
+        if (id(uart_bus).read_byte(&c)) {
+          response += (char)c;
+        }
+      }
+
+      ESP_LOGD("UART", "Full response: %s", response.c_str());
+
+      // If no response, mark as faulty
+      if (response.empty()) {
+        ESP_LOGW("UART", "No data received, marking Thermistor 2 as faulty.");
+        fault_active = true;
+        id(thermistor_2_fault).publish_state(true);
+        return NAN;
+      }
+
+      // Check for error response "-09999"
+      size_t pos = response.find("031-");
+      if (pos != std::string::npos) {
+        ESP_LOGW("UART", "Thermistor 2 Error: Disconnected or faulty!");
+        fault_active = true;
+        id(thermistor_2_fault).publish_state(true);
+        return NAN;
+      }
+
+      // Extract valid temperature from "031+xxxxx"
+      pos = response.find("031+");
+      if (pos != std::string::npos && response.length() >= pos + 9) {
+        int temp = atoi(response.substr(pos + 4, 5).c_str());
+        float temperature = temp / 10.0;
+
+        // Ignore invalid 0°C readings
+        if (temperature == 0.0) {
+          ESP_LOGW("UART", "Ignoring invalid 0°C reading, keeping last value: %.1f°C", last_valid_temp);
+          return last_valid_temp;
+        }
+
+        // Update last valid temperature
+        last_valid_temp = temperature;
+
+        // Reset fault state if valid data is received
+        if (fault_active) {
+          ESP_LOGI("UART", "Thermistor 2 recovered. Clearing fault state.");
+          fault_active = false;
+          id(thermistor_2_fault).publish_state(false);
+        }
+
+        return temperature;
+      }
+
+      ESP_LOGW("UART", "Temperature data not found, marking Thermistor 2 as faulty.");
+      fault_active = true;
+      id(thermistor_2_fault).publish_state(true);
+      return NAN;
+    unit_of_measurement: "°C"
+    update_interval: 30s
+
+# Thermistor 3 Temperature (Extract in)
+  - platform: template
+    id: thermistor_3
+    name: "Thermistor 3 Temperature (Extract in)"
+    lambda: |-
+      static float last_valid_temp = NAN;
+      static bool fault_active = false;
+
+      // Flush old data and send request for temperature (Address 032)
+      id(uart_bus).flush();
+      id(uart_bus).write_str("0321xxxxxx\r\n");
+      delay(500);
+
+      // Read UART response
+      std::string response = "";
+      uint8_t c;
+      while (id(uart_bus).available()) {
+        if (id(uart_bus).read_byte(&c)) {
+          response += (char)c;
+        }
+      }
+
+      ESP_LOGD("UART", "Full response: %s", response.c_str());
+
+      if (response.empty()) {
+        ESP_LOGW("UART", "No data received, marking Thermistor 3 as faulty.");
+        fault_active = true;
+        id(thermistor_3_fault).publish_state(true);
+        return NAN;
+      }
+
+      size_t pos = response.find("032-");
+      if (pos != std::string::npos) {
+        ESP_LOGW("UART", "Thermistor 3 Error: Disconnected or faulty!");
+        fault_active = true;
+        id(thermistor_3_fault).publish_state(true);
+        return NAN;
+      }
+
+      pos = response.find("032+");
+      if (pos != std::string::npos && response.length() >= pos + 9) {
+        int temp = atoi(response.substr(pos + 4, 5).c_str());
+        float temperature = temp / 10.0;
+
+        if (temperature == 0.0) {
+          ESP_LOGW("UART", "Ignoring invalid 0°C reading, keeping last value: %.1f°C", last_valid_temp);
+          return last_valid_temp;
+        }
+
+        last_valid_temp = temperature;
+
+        if (fault_active) {
+          ESP_LOGI("UART", "Thermistor 3 recovered. Clearing fault state.");
+          fault_active = false;
+          id(thermistor_3_fault).publish_state(false);
+        }
+
+        return temperature;
+      }
+
+      ESP_LOGW("UART", "Temperature data not found, marking Thermistor 3 as faulty.");
+      fault_active = true;
+      id(thermistor_3_fault).publish_state(true);
+      return NAN;
+    unit_of_measurement: "°C"
+    update_interval: 30s
+
+# Humidity Sensor
+  - platform: template
+    id: humidity_sensor
+    name: "Humidity Sensor"
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    force_update: true  # Ensure Home Assistant always gets new data
+    lambda: |-
+      static float last_valid_humidity = NAN;
+
+      // Send request for humidity (assuming address 060)
+      id(uart_bus).flush();
+      id(uart_bus).write_str("0601xxxxxx\r\n");
+      delay(500); // Wait for response
+
+      // Read UART response
+      std::string response = "";
+      uint8_t c;
+      while (id(uart_bus).available()) {
+        if (id(uart_bus).read_byte(&c)) {
+          response += (char)c;
+        }
+      }
+
+      ESP_LOGD("UART", "Humidity response: %s", response.c_str());
+
+      // Ensure valid response
+      if (response.empty()) {
+        ESP_LOGW("UART", "No humidity data received, keeping last value: %.1f%%", last_valid_humidity);
+        return last_valid_humidity;
+      }
+
+      // Extract humidity value (assuming format "060+xxxxx")
+      size_t pos = response.find("060+");
+      if (pos != std::string::npos && response.length() >= pos + 9) {
+        int raw_humidity = atoi(response.substr(pos + 4, 5).c_str());
+        float humidity = raw_humidity / 1000.0; // Adjusted scaling factor
+
+        // Ignore invalid 0% readings
+        if (humidity == 0.0) {
+          ESP_LOGW("UART", "Ignoring invalid 0%% reading, keeping last value: %.1f%%", last_valid_humidity);
+          return last_valid_humidity;
+        }
+
+        // Update last valid humidity
+        last_valid_humidity = humidity;
+        return humidity;
+      }
+
+      ESP_LOGW("UART", "Humidity data not found, keeping last value: %.1f%%", last_valid_humidity);
+      return last_valid_humidity;
+    update_interval: 30s
+
+
+# Fan Speed Monitoring Sensor
+  - platform: template
+    id: fan_speed
+    name: "Fan Speed"
+    lambda: |-
+      static int last_fan_speed = -1;
+
+      // Flush UART buffer & send request for fan speed (Addresses 151, 152, 154)
+      id(uart_bus).flush();
+      id(uart_bus).write_str("1511xxxxxx\r\n");
+      delay(300);  
+      id(uart_bus).write_str("1521xxxxxx\r\n");
+      delay(300);  
+      id(uart_bus).write_str("1541xxxxxx\r\n");
+      delay(300);  
+
+      // Read UART response
+      std::string response = "";
+      uint8_t c;
+      while (id(uart_bus).available()) {
+        if (id(uart_bus).read_byte(&c)) {
+          response += (char)c;
+        }
+      }
+
+      ESP_LOGD("UART", "Fan Speed Response: %s", response.c_str());
+
+      // Match fan speed responses correctly
+      if (response.find("151+00001") != std::string::npos) {
+        last_fan_speed = 1;
+      } else if (response.find("152+00001") != std::string::npos) {
+        last_fan_speed = 3;
+      } else if (response.find("154+00001") != std::string::npos) {
+        last_fan_speed = 4;
+      } else {
+        last_fan_speed = 0;  // Default to OFF
+      }
+
+      return last_fan_speed;
+    update_interval: 10s
+
+# Binary Sensor - indicate if there is a fault on thermistor 2
+binary_sensor:
+  - platform: template
+    id: thermistor_1_fault
+    name: "Thermistor 1 Fault"
+    device_class: problem  # Home Assistant will now show "Problem" or "OK"
+
+  - platform: template
+    id: thermistor_2_fault
+    name: "Thermistor 2 Fault"
+    device_class: problem  # Home Assistant will now show "Problem" or "OK"
+
+  - platform: template
+    id: thermistor_3_fault
+    name: "Thermistor 3 Fault"
+    device_class: problem  # Home Assistant will now show "Problem" or "OK"  
+
+# Switches - Control Fan Speed (and track real state)
+switch:
+  - platform: template
+    id: fan_speed_1
+    name: "Fan Speed 1"
+    lambda: |-
+      return id(fan_speed).state == 1;
+    turn_on_action:
+      - uart.write: "1510+00001\r\n"
+    turn_off_action:
+      - uart.write: "1510+00000\r\n"
+
+  - platform: template
+    id: fan_speed_3
+    name: "Fan Speed 3"
+    lambda: |-
+      return id(fan_speed).state == 3;
+    turn_on_action:
+      - uart.write: "1520+00001\r\n"
+    turn_off_action:
+      - uart.write: "1520+00000\r\n"
+
+  - platform: template
+    id: fan_speed_4
+    name: "Fan Speed 4"
+    lambda: |-
+      return id(fan_speed).state == 4;
+    turn_on_action:
+      - uart.write: "1540+00001\r\n"
+    turn_off_action:
+      - uart.write: "1540+00000\r\n"
