@@ -1,4 +1,5 @@
 **Background**
+
 Our story begins in August 2022 when I posted on the Home Assistant forum ( https://community.home-assistant.io/t/heat-recovery-mvhr-integration-titon-beam-in-ireland-mechanical-ventilation-with-heat-recovery/454942/22 ) on whether anyone has an integration for Titon/Beam Mechanical Ventilation with Heat Recovery (MVHR).
 I didn't have much response, other than one or two responses looking for similar. I managed to get a command line to the unit via RS485 and was able to understand some of the concepts using a manual from the vendor.
 
