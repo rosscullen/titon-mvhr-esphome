@@ -1,25 +1,34 @@
 esphome:
   name: mvhr
   friendly_name: Titon MVHR
+  on_boot:
+    priority: -100
+    then:
+      - delay: 3s
+      - logger.log: "MVHR Standalone Controller Ready"
+      # Initial poll of all sensors on boot
+      - script.execute: poll_all_sensors
 
 esp8266:
   board: d1_mini
 
-# Enable logging (inc. responses from MVHR Unit)
+# Enable logging
 logger:
   level: DEBUG
   logs:
     uart: DEBUG
+    mvhr: DEBUG
+    mvhr_rx: INFO  # Set to DEBUG for detailed RX logging
   baud_rate: 0  # Disables ESPHome serial logging (avoids UART conflicts)
 
 # Enable Home Assistant API
 api:
   encryption:
-    key: ****
+    key: "" # UPDATE WITH YOUR OWN ESPHOME ENCRYPTION KEY 
 
 ota:
   - platform: esphome
-    password: ****
+    password: "" # UPDATE WITH YOUR OWN PASSWORD HERE. More info at https://esphome.io/components/ota/esphome/
 
 wifi:
   ssid: !secret wifi_ssid
@@ -28,378 +37,1033 @@ wifi:
   # Enable fallback hotspot (captive portal) in case wifi connection fails
   ap:
     ssid: "Mvhr Fallback Hotspot"
-    password: ****
+    password: "" # UPDATE WITH YOUR OWN FALLBACK PASSWORD HERE 
 
 captive_portal:
 
-# UART for RS-485 communication
+# =============================================================================
+# UART Configuration for Titon MVHR RS-485 Communication
+# =============================================================================
 uart:
-  id: uart_bus
-  tx_pin: 1  # TX (GPIO1)
-  rx_pin: 3  # RX (GPIO3)
+  id: uart_mvhr
+  tx_pin: GPIO1  # D1 Mini TX
+  rx_pin: GPIO3  # D1 Mini RX
   baud_rate: 1200
+  data_bits: 8
   parity: NONE
   stop_bits: 1
-  debug:
-    direction: BOTH
+
+# =============================================================================
+# Global Variables
+# =============================================================================
+globals:
+  # Temperature sensors (raw values, divide by 10 for °C)
+  - id: temp_stale_in_raw
+    type: int
+    restore_value: no
+    initial_value: '-9999'
+  - id: temp_stale_out_raw
+    type: int
+    restore_value: no
+    initial_value: '-9999'
+  - id: temp_fresh_in_raw
+    type: int
+    restore_value: no
+    initial_value: '-9999'
   
-# Sensors Various (inc Logger)
+  # Humidity
+  - id: humidity_raw
+    type: int
+    restore_value: no
+    initial_value: '0'
+  
+  # Runtime and filter
+  - id: runtime_hours_raw
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: filter_remaining_raw
+    type: int
+    restore_value: no
+    initial_value: '0'
+  
+  # Status word
+  - id: status_word_raw
+    type: int
+    restore_value: no
+    initial_value: '0'
+  
+  # Speed switch states
+  - id: speed1_state
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: speed3_state
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: speed4_state
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  
+  # Boost inhibit
+  - id: boost_inhibit_state
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  
+  # Summer features
+  - id: summer_bypass_state
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: summerboost_disabled_state
+    type: bool
+    restore_value: no
+    initial_value: 'true'
+  
+  # Polling index
+  - id: current_poll_index
+    type: int
+    restore_value: no
+    initial_value: '0'
+  
+  # Response buffer
+  - id: rx_buffer
+    type: std::string
+    restore_value: no
+  
+  # Communication tracking
+  - id: last_rx_time
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+  - id: successful_polls
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: failed_polls
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+# =============================================================================
+# Scripts for MVHR Communication
+# =============================================================================
+script:
+  # Send a read command
+  - id: send_read_command
+    parameters:
+      address: string
+    then:
+      - lambda: |-
+          // Clear RX buffer before sending
+          id(rx_buffer) = "";
+          
+          // Build 12-byte read command: AAA1+00000\r\n
+          std::string cmd = address + "1+00000\r\n";
+          
+          ESP_LOGD("mvhr", "TX: %s (read)", address.c_str());
+          
+          for (char c : cmd) {
+            id(uart_mvhr).write_byte(c);
+          }
+
+  # Send a write command
+  - id: send_write_command
+    parameters:
+      address: string
+      value: int
+    then:
+      - lambda: |-
+          id(rx_buffer) = "";
+          
+          char polarity = (value >= 0) ? '+' : '-';
+          int abs_value = abs(value);
+          if (abs_value > 99999) abs_value = 99999;
+          
+          char data_str[6];
+          snprintf(data_str, sizeof(data_str), "%05d", abs_value);
+          
+          std::string cmd = address + "0" + polarity + data_str + "\r\n";
+          
+          ESP_LOGD("mvhr", "TX: %s = %d (write)", address.c_str(), value);
+          
+          for (char c : cmd) {
+            id(uart_mvhr).write_byte(c);
+          }
+
+  # Poll single sensor (called by interval)
+  - id: poll_next_sensor
+    then:
+      - lambda: |-
+          // All addresses to poll in rotation
+          // Temperatures and status polled more frequently by appearing multiple times
+          const char* addresses[] = {
+            "030",  // Thermistor 1 (Stale In)
+            "031",  // Thermistor 2 (Stale Out)
+            "032",  // Thermistor 3 (Fresh In)
+            "036",  // Humidity
+            "061",  // Status word
+            "151",  // Speed 1 state
+            "152",  // Speed 3 state
+            "154",  // Speed 4 state
+            "326",  // Boost inhibit
+            "230",  // Summer bypass
+            "290",  // SummerBoost
+            "030",  // Thermistor 1 again (more frequent)
+            "031",  // Thermistor 2 again
+            "032",  // Thermistor 3 again
+            "061",  // Status word again
+            "060",  // Runtime hours (less frequent)
+            "341",  // Filter remaining (less frequent)
+          };
+          const int num_addresses = 17;
+          
+          int idx = id(current_poll_index);
+          id(current_poll_index) = (idx + 1) % num_addresses;
+          
+          std::string addr = addresses[idx];
+          
+          // Clear buffer and send
+          id(rx_buffer) = "";
+          std::string cmd = addr + "1+00000\r\n";
+          
+          for (char c : cmd) {
+            id(uart_mvhr).write_byte(c);
+          }
+
+  # Poll all sensors at once (used on boot and manual refresh)
+  - id: poll_all_sensors
+    then:
+      - script.execute:
+          id: send_read_command
+          address: "030"
+      - delay: 250ms
+      - script.execute:
+          id: send_read_command
+          address: "031"
+      - delay: 250ms
+      - script.execute:
+          id: send_read_command
+          address: "032"
+      - delay: 250ms
+      - script.execute:
+          id: send_read_command
+          address: "036"
+      - delay: 250ms
+      - script.execute:
+          id: send_read_command
+          address: "061"
+      - delay: 250ms
+      - script.execute:
+          id: send_read_command
+          address: "151"
+      - delay: 250ms
+      - script.execute:
+          id: send_read_command
+          address: "152"
+      - delay: 250ms
+      - script.execute:
+          id: send_read_command
+          address: "154"
+      - delay: 250ms
+      - script.execute:
+          id: send_read_command
+          address: "326"
+      - delay: 250ms
+      - script.execute:
+          id: send_read_command
+          address: "230"
+      - delay: 250ms
+      - script.execute:
+          id: send_read_command
+          address: "290"
+      - delay: 250ms
+      - script.execute:
+          id: send_read_command
+          address: "060"
+      - delay: 250ms
+      - script.execute:
+          id: send_read_command
+          address: "341"
+      - logger.log: "Full sensor poll complete"
+
+# =============================================================================
+# Intervals for Polling and Response Processing
+# =============================================================================
+interval:
+  # Main polling interval - poll one sensor every 2 seconds
+  # Full cycle of 17 addresses = 34 seconds
+  # At 1200 baud: TX 12 bytes ~100ms, RX 11 bytes ~92ms, plenty of margin
+  - interval: 2s
+    then:
+      - script.execute: poll_next_sensor
+
+  # Process UART responses
+  - interval: 50ms
+    then:
+      - lambda: |-
+          // Read available bytes
+          while (id(uart_mvhr).available()) {
+            uint8_t byte;
+            id(uart_mvhr).read_byte(&byte);
+            id(rx_buffer) += (char)byte;
+          }
+          
+          // Look for complete messages
+          size_t crlf_pos = id(rx_buffer).find("\r\n");
+          
+          while (crlf_pos != std::string::npos) {
+            std::string message = id(rx_buffer).substr(0, crlf_pos + 2);
+            id(rx_buffer) = id(rx_buffer).substr(crlf_pos + 2);
+            
+            // Skip our own TX echo (12 bytes)
+            if (message.length() == 12 && (message[3] == '0' || message[3] == '1')) {
+              crlf_pos = id(rx_buffer).find("\r\n");
+              continue;
+            }
+            
+            // Valid RX response is 11 bytes: AAA[±]DDDDD\r\n
+            if (message.length() == 11) {
+              std::string addr_str = message.substr(0, 3);
+              char polarity = message[3];
+              std::string data_str = message.substr(4, 5);
+              
+              if (polarity != '+' && polarity != '-') {
+                ESP_LOGW("mvhr", "Invalid polarity in response");
+                id(failed_polls)++;
+                crlf_pos = id(rx_buffer).find("\r\n");
+                continue;
+              }
+              
+              if (addr_str == "999") {
+                ESP_LOGW("mvhr", "Error response (addr 999)");
+                id(failed_polls)++;
+                crlf_pos = id(rx_buffer).find("\r\n");
+                continue;
+              }
+              
+              int data_value = atoi(data_str.c_str());
+              if (polarity == '-') data_value = -data_value;
+              
+              int address = atoi(addr_str.c_str());
+              
+              id(last_rx_time) = millis();
+              id(successful_polls)++;
+              
+              ESP_LOGD("mvhr", "RX: %03d = %d", address, data_value);
+              
+              // Store values
+              switch (address) {
+                case 30:
+                  id(temp_stale_in_raw) = data_value;
+                  break;
+                case 31:
+                  id(temp_stale_out_raw) = data_value;
+                  break;
+                case 32:
+                  id(temp_fresh_in_raw) = data_value;
+                  break;
+                case 36:
+                  id(humidity_raw) = data_value;
+                  break;
+                case 60:
+                  id(runtime_hours_raw) = data_value;
+                  break;
+                case 61:
+                  id(status_word_raw) = data_value;
+                  break;
+                case 341:
+                  id(filter_remaining_raw) = data_value;
+                  break;
+                case 151:
+                  id(speed1_state) = (data_value == 1);
+                  break;
+                case 152:
+                  id(speed3_state) = (data_value == 1);
+                  break;
+                case 154:
+                  id(speed4_state) = (data_value == 1);
+                  break;
+                case 326:
+                  id(boost_inhibit_state) = (data_value == 1);
+                  break;
+                case 230:
+                  id(summer_bypass_state) = (data_value == 1);
+                  break;
+                case 290:
+                  // INVERTED: 0=enabled, 1=disabled
+                  id(summerboost_disabled_state) = (data_value == 1);
+                  break;
+              }
+            }
+            
+            crlf_pos = id(rx_buffer).find("\r\n");
+          }
+          
+          // Prevent buffer overflow
+          if (id(rx_buffer).length() > 50) {
+            id(rx_buffer) = "";
+          }
+
+# =============================================================================
+# Sensors
+# =============================================================================
 sensor:
-
-# Thermistor 1 Temperature (stale in)
+  # Temperatures
   - platform: template
-    id: thermistor_1
-    name: "Thermistor 1 Temperature (stale in)"
-    lambda: |-
-      static float last_valid_temp = NAN;  // Store last valid temperature
-      static bool fault_active = false;    // Track fault state
-
-      // Flush old data and send request for temperature (Address 030)
-      id(uart_bus).flush();
-      id(uart_bus).write_str("0301xxxxxx\r\n");
-      delay(500); // Wait for response
-
-      // Read UART response
-      std::string response = "";
-      uint8_t c;
-      while (id(uart_bus).available()) {
-        if (id(uart_bus).read_byte(&c)) {
-          response += (char)c;
-        }
-      }
-
-      ESP_LOGD("UART", "Full response: %s", response.c_str());
-
-      // If no response is received, assume fault
-      if (response.empty()) {
-        ESP_LOGW("UART", "No data received, marking Thermistor 1 as faulty.");
-        fault_active = true;
-        id(thermistor_1_fault).publish_state(true);
-        return NAN; // Return unknown state
-      }
-
-      // Check if response contains an error "-09999"
-      size_t pos = response.find("030-");
-      if (pos != std::string::npos) {
-        ESP_LOGW("UART", "Thermistor 1 Error: Disconnected or faulty!");
-        fault_active = true;
-        id(thermistor_1_fault).publish_state(true);
-        return NAN;
-      }
-
-      // Extract valid temperature from "030+xxxxx"
-      pos = response.find("030+");
-      if (pos != std::string::npos && response.length() >= pos + 9) {
-        int temp = atoi(response.substr(pos + 4, 5).c_str());
-        float temperature = temp / 10.0;
-
-        // Ignore invalid 0°C readings
-        if (temperature == 0.0) {
-          ESP_LOGW("UART", "Ignoring invalid 0°C reading, keeping last value: %.1f°C", last_valid_temp);
-          return last_valid_temp;
-        }
-
-        // Update last valid temperature
-        last_valid_temp = temperature;
-
-        // Reset fault state if a valid temperature is received
-        if (fault_active) {
-          ESP_LOGI("UART", "Thermistor 1 recovered. Clearing fault state.");
-          fault_active = false;
-          id(thermistor_1_fault).publish_state(false);
-        }
-
-        return temperature;
-      }
-
-      // If temperature data is not found, mark sensor as faulty
-      ESP_LOGW("UART", "Temperature data not found, marking Thermistor 1 as faulty.");
-      fault_active = true;
-      id(thermistor_1_fault).publish_state(true);
-      return NAN;
+    name: "Stale Air In Temperature"
+    id: temp_stale_in
     unit_of_measurement: "°C"
-    update_interval: 30s
-
-# Thermistor 2 Temperature (Fresh in)
-  - platform: template
-    id: thermistor_2
-    name: "Thermistor 2 Temperature (Fresh in)"
-    lambda: |-
-      static float last_valid_temp = NAN;
-      static bool fault_active = false;
-
-      // Flush old data and send request for temperature (Address 031)
-      id(uart_bus).flush();
-      id(uart_bus).write_str("0311xxxxxx\r\n");
-      delay(500);
-
-      // Read UART response
-      std::string response = "";
-      uint8_t c;
-      while (id(uart_bus).available()) {
-        if (id(uart_bus).read_byte(&c)) {
-          response += (char)c;
-        }
-      }
-
-      ESP_LOGD("UART", "Full response: %s", response.c_str());
-
-      // If no response, mark as faulty
-      if (response.empty()) {
-        ESP_LOGW("UART", "No data received, marking Thermistor 2 as faulty.");
-        fault_active = true;
-        id(thermistor_2_fault).publish_state(true);
-        return NAN;
-      }
-
-      // Check for error response "-09999"
-      size_t pos = response.find("031-");
-      if (pos != std::string::npos) {
-        ESP_LOGW("UART", "Thermistor 2 Error: Disconnected or faulty!");
-        fault_active = true;
-        id(thermistor_2_fault).publish_state(true);
-        return NAN;
-      }
-
-      // Extract valid temperature from "031+xxxxx"
-      pos = response.find("031+");
-      if (pos != std::string::npos && response.length() >= pos + 9) {
-        int temp = atoi(response.substr(pos + 4, 5).c_str());
-        float temperature = temp / 10.0;
-
-        // Ignore invalid 0°C readings
-        if (temperature == 0.0) {
-          ESP_LOGW("UART", "Ignoring invalid 0°C reading, keeping last value: %.1f°C", last_valid_temp);
-          return last_valid_temp;
-        }
-
-        // Update last valid temperature
-        last_valid_temp = temperature;
-
-        // Reset fault state if valid data is received
-        if (fault_active) {
-          ESP_LOGI("UART", "Thermistor 2 recovered. Clearing fault state.");
-          fault_active = false;
-          id(thermistor_2_fault).publish_state(false);
-        }
-
-        return temperature;
-      }
-
-      ESP_LOGW("UART", "Temperature data not found, marking Thermistor 2 as faulty.");
-      fault_active = true;
-      id(thermistor_2_fault).publish_state(true);
-      return NAN;
-    unit_of_measurement: "°C"
-    update_interval: 30s
-
-# Thermistor 3 Temperature (Extract in)
-  - platform: template
-    id: thermistor_3
-    name: "Thermistor 3 Temperature (Extract in)"
-    lambda: |-
-      static float last_valid_temp = NAN;
-      static bool fault_active = false;
-
-      // Flush old data and send request for temperature (Address 032)
-      id(uart_bus).flush();
-      id(uart_bus).write_str("0321xxxxxx\r\n");
-      delay(500);
-
-      // Read UART response
-      std::string response = "";
-      uint8_t c;
-      while (id(uart_bus).available()) {
-        if (id(uart_bus).read_byte(&c)) {
-          response += (char)c;
-        }
-      }
-
-      ESP_LOGD("UART", "Full response: %s", response.c_str());
-
-      if (response.empty()) {
-        ESP_LOGW("UART", "No data received, marking Thermistor 3 as faulty.");
-        fault_active = true;
-        id(thermistor_3_fault).publish_state(true);
-        return NAN;
-      }
-
-      size_t pos = response.find("032-");
-      if (pos != std::string::npos) {
-        ESP_LOGW("UART", "Thermistor 3 Error: Disconnected or faulty!");
-        fault_active = true;
-        id(thermistor_3_fault).publish_state(true);
-        return NAN;
-      }
-
-      pos = response.find("032+");
-      if (pos != std::string::npos && response.length() >= pos + 9) {
-        int temp = atoi(response.substr(pos + 4, 5).c_str());
-        float temperature = temp / 10.0;
-
-        if (temperature == 0.0) {
-          ESP_LOGW("UART", "Ignoring invalid 0°C reading, keeping last value: %.1f°C", last_valid_temp);
-          return last_valid_temp;
-        }
-
-        last_valid_temp = temperature;
-
-        if (fault_active) {
-          ESP_LOGI("UART", "Thermistor 3 recovered. Clearing fault state.");
-          fault_active = false;
-          id(thermistor_3_fault).publish_state(false);
-        }
-
-        return temperature;
-      }
-
-      ESP_LOGW("UART", "Temperature data not found, marking Thermistor 3 as faulty.");
-      fault_active = true;
-      id(thermistor_3_fault).publish_state(true);
-      return NAN;
-    unit_of_measurement: "°C"
-    update_interval: 30s
-
-# Humidity Sensor
-  - platform: template
-    id: humidity_sensor
-    name: "Humidity Sensor"
-    unit_of_measurement: "%"
     accuracy_decimals: 1
-    force_update: true  # Ensure Home Assistant always gets new data
+    device_class: temperature
+    state_class: measurement
+    icon: "mdi:thermometer"
     lambda: |-
-      static float last_valid_humidity = NAN;
-
-      // Send request for humidity (assuming address 060)
-      id(uart_bus).flush();
-      id(uart_bus).write_str("0601xxxxxx\r\n");
-      delay(500); // Wait for response
-
-      // Read UART response
-      std::string response = "";
-      uint8_t c;
-      while (id(uart_bus).available()) {
-        if (id(uart_bus).read_byte(&c)) {
-          response += (char)c;
-        }
-      }
-
-      ESP_LOGD("UART", "Humidity response: %s", response.c_str());
-
-      // Ensure valid response
-      if (response.empty()) {
-        ESP_LOGW("UART", "No humidity data received, keeping last value: %.1f%%", last_valid_humidity);
-        return last_valid_humidity;
-      }
-
-      // Extract humidity value (assuming format "060+xxxxx")
-      size_t pos = response.find("060+");
-      if (pos != std::string::npos && response.length() >= pos + 9) {
-        int raw_humidity = atoi(response.substr(pos + 4, 5).c_str());
-        float humidity = raw_humidity / 1000.0; // Adjusted scaling factor
-
-        // Ignore invalid 0% readings
-        if (humidity == 0.0) {
-          ESP_LOGW("UART", "Ignoring invalid 0%% reading, keeping last value: %.1f%%", last_valid_humidity);
-          return last_valid_humidity;
-        }
-
-        // Update last valid humidity
-        last_valid_humidity = humidity;
-        return humidity;
-      }
-
-      ESP_LOGW("UART", "Humidity data not found, keeping last value: %.1f%%", last_valid_humidity);
-      return last_valid_humidity;
-    update_interval: 30s
-
-
-# Fan Speed Monitoring Sensor
-  - platform: template
-    id: fan_speed
-    name: "Fan Speed"
-    lambda: |-
-      static int last_fan_speed = -1;
-
-      // Flush UART buffer & send request for fan speed (Addresses 151, 152, 154)
-      id(uart_bus).flush();
-      id(uart_bus).write_str("1511xxxxxx\r\n");
-      delay(300);  
-      id(uart_bus).write_str("1521xxxxxx\r\n");
-      delay(300);  
-      id(uart_bus).write_str("1541xxxxxx\r\n");
-      delay(300);  
-
-      // Read UART response
-      std::string response = "";
-      uint8_t c;
-      while (id(uart_bus).available()) {
-        if (id(uart_bus).read_byte(&c)) {
-          response += (char)c;
-        }
-      }
-
-      ESP_LOGD("UART", "Fan Speed Response: %s", response.c_str());
-
-      // Match fan speed responses correctly
-      if (response.find("151+00001") != std::string::npos) {
-        last_fan_speed = 1;
-      } else if (response.find("152+00001") != std::string::npos) {
-        last_fan_speed = 3;
-      } else if (response.find("154+00001") != std::string::npos) {
-        last_fan_speed = 4;
-      } else {
-        last_fan_speed = 0;  // Default to OFF
-      }
-
-      return last_fan_speed;
+      if (id(temp_stale_in_raw) <= -9999) return NAN;
+      return id(temp_stale_in_raw) / 10.0;
     update_interval: 10s
 
-# Binary Sensor - indicate if there is a fault on thermistor 2
+  - platform: template
+    name: "Stale Air Out Temperature"
+    id: temp_stale_out
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    device_class: temperature
+    state_class: measurement
+    icon: "mdi:thermometer"
+    lambda: |-
+      if (id(temp_stale_out_raw) <= -9999) return NAN;
+      return id(temp_stale_out_raw) / 10.0;
+    update_interval: 10s
+
+  - platform: template
+    name: "Fresh Air In Temperature"
+    id: temp_fresh_in
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    device_class: temperature
+    state_class: measurement
+    icon: "mdi:thermometer"
+    lambda: |-
+      if (id(temp_fresh_in_raw) <= -9999) return NAN;
+      return id(temp_fresh_in_raw) / 10.0;
+    update_interval: 10s
+
+  # Humidity
+  - platform: template
+    name: "Internal Humidity"
+    id: humidity_internal
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    device_class: humidity
+    state_class: measurement
+    icon: "mdi:water-percent"
+    lambda: |-
+      return id(humidity_raw);
+    update_interval: 10s
+
+  # Runtime
+  - platform: template
+    name: "Runtime Hours"
+    id: runtime_hours
+    unit_of_measurement: "h"
+    accuracy_decimals: 0
+    state_class: total_increasing
+    icon: "mdi:clock-outline"
+    lambda: |-
+      return id(runtime_hours_raw);
+    update_interval: 60s
+
+  # Filter
+  - platform: template
+    name: "Filter Remaining Time"
+    id: filter_remaining
+    unit_of_measurement: "h"
+    accuracy_decimals: 0
+    icon: "mdi:air-filter"
+    lambda: |-
+      return id(filter_remaining_raw);
+    update_interval: 60s
+
+  # Status Word (diagnostic)
+  - platform: template
+    name: "Status Word"
+    id: status_word
+    accuracy_decimals: 0
+    icon: "mdi:information-outline"
+    entity_category: diagnostic
+    lambda: |-
+      return id(status_word_raw);
+    update_interval: 10s
+
+  # Heat Recovery Efficiency
+  - platform: template
+    name: "Heat Recovery Efficiency"
+    id: heat_recovery_efficiency
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    icon: "mdi:percent"
+    lambda: |-
+      if (id(temp_stale_in_raw) <= -9999 || 
+          id(temp_stale_out_raw) <= -9999 || 
+          id(temp_fresh_in_raw) <= -9999) {
+        return NAN;
+      }
+      float stale_in = id(temp_stale_in_raw) / 10.0;
+      float stale_out = id(temp_stale_out_raw) / 10.0;
+      float fresh_in = id(temp_fresh_in_raw) / 10.0;
+      
+      float denominator = stale_in - fresh_in;
+      if (abs(denominator) < 0.1) return NAN;
+      
+      float efficiency = ((stale_in - stale_out) / denominator) * 100.0;
+      if (efficiency < 0) efficiency = 0;
+      if (efficiency > 100) efficiency = 100;
+      
+      return efficiency;
+    update_interval: 30s
+
+  # Supply Air Temperature (calculated - what enters the house after heat exchange)
+  - platform: template
+    name: "Supply Air Temperature"
+    id: supply_air_temp
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    device_class: temperature
+    state_class: measurement
+    icon: "mdi:thermometer-check"
+    lambda: |-
+      // Supply air temp ≈ Fresh In + (efficiency * (Stale In - Fresh In))
+      if (id(temp_stale_in_raw) <= -9999 || 
+          id(temp_fresh_in_raw) <= -9999) {
+        return NAN;
+      }
+      float stale_in = id(temp_stale_in_raw) / 10.0;
+      float fresh_in = id(temp_fresh_in_raw) / 10.0;
+      float stale_out = id(temp_stale_out_raw) / 10.0;
+      
+      // If we have stale out, calculate more accurately
+      if (id(temp_stale_out_raw) > -9999) {
+        // Heat recovered = stale_in - stale_out
+        // Supply air = fresh_in + heat_recovered
+        return fresh_in + (stale_in - stale_out);
+      }
+      return NAN;
+    update_interval: 30s
+
+  # Communication statistics
+  - platform: template
+    name: "Successful Polls"
+    id: successful_polls_sensor
+    accuracy_decimals: 0
+    icon: "mdi:check-circle"
+    entity_category: diagnostic
+    lambda: |-
+      return id(successful_polls);
+    update_interval: 60s
+
+  - platform: template
+    name: "Failed Polls"
+    id: failed_polls_sensor
+    accuracy_decimals: 0
+    icon: "mdi:alert-circle"
+    entity_category: diagnostic
+    lambda: |-
+      return id(failed_polls);
+    update_interval: 60s
+
+  # WiFi and system
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
+
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 60s
+
+# =============================================================================
+# Binary Sensors
+# =============================================================================
 binary_sensor:
+  # Filter status
   - platform: template
-    id: thermistor_1_fault
-    name: "Thermistor 1 Fault"
-    device_class: problem  # Home Assistant will now show "Problem" or "OK"
+    name: "Filter Change Required"
+    id: filter_change_required
+    device_class: problem
+    icon: "mdi:air-filter"
+    lambda: |-
+      return id(filter_remaining_raw) == 0;
+
+  # Engine Running (Bit 11 = 2048)
+  - platform: template
+    name: "Engine Running"
+    id: engine_running
+    device_class: running
+    icon: "mdi:engine"
+    lambda: |-
+      return (id(status_word_raw) & 2048) != 0;
+
+  # Supply Fan Error (Bit 0 = 1)
+  - platform: template
+    name: "Supply Fan Error"
+    id: supply_fan_error
+    device_class: problem
+    icon: "mdi:fan-alert"
+    lambda: |-
+      return (id(status_word_raw) & 1) != 0;
+
+  # Extract Fan Error (Bit 2 = 4)
+  - platform: template
+    name: "Extract Fan Error"
+    id: extract_fan_error
+    device_class: problem
+    icon: "mdi:fan-alert"
+    lambda: |-
+      return (id(status_word_raw) & 4) != 0;
+
+  # Thermistor Errors
+  - platform: template
+    name: "Thermistor Error"
+    id: thermistor_error
+    device_class: problem
+    icon: "mdi:thermometer-alert"
+    lambda: |-
+      return (id(status_word_raw) & 2) != 0;
 
   - platform: template
-    id: thermistor_2_fault
-    name: "Thermistor 2 Fault"
-    device_class: problem  # Home Assistant will now show "Problem" or "OK"
+    name: "Thermistor 1 Error"
+    id: thermistor_1_error
+    device_class: problem
+    icon: "mdi:thermometer-alert"
+    entity_category: diagnostic
+    lambda: |-
+      return (id(status_word_raw) & 4096) != 0;
 
   - platform: template
-    id: thermistor_3_fault
-    name: "Thermistor 3 Fault"
-    device_class: problem  # Home Assistant will now show "Problem" or "OK"  
+    name: "Thermistor 2 Error"
+    id: thermistor_2_error
+    device_class: problem
+    icon: "mdi:thermometer-alert"
+    entity_category: diagnostic
+    lambda: |-
+      return (id(status_word_raw) & 8192) != 0;
 
-# Switches - Control Fan Speed (and track real state)
+  - platform: template
+    name: "Thermistor 3 Error"
+    id: thermistor_3_error
+    device_class: problem
+    icon: "mdi:thermometer-alert"
+    entity_category: diagnostic
+    lambda: |-
+      return (id(status_word_raw) & 16384) != 0;
+
+  # Humidity Sensor Error (Bit 15 = 32768)
+  - platform: template
+    name: "Humidity Sensor Error"
+    id: humidity_error
+    device_class: problem
+    icon: "mdi:water-alert"
+    lambda: |-
+      return (id(status_word_raw) & 32768) != 0;
+
+  # EEPROM Error (Bit 3 = 8)
+  - platform: template
+    name: "EEPROM Error"
+    id: eeprom_error
+    device_class: problem
+    icon: "mdi:memory"
+    entity_category: diagnostic
+    lambda: |-
+      return (id(status_word_raw) & 8) != 0;
+
+  # Engine Error (Bit 9 = 512)
+  - platform: template
+    name: "Engine Error"
+    id: engine_error
+    device_class: problem
+    icon: "mdi:engine-off"
+    lambda: |-
+      return (id(status_word_raw) & 512) != 0;
+
+  # Switch Error (Bit 10 = 1024)
+  - platform: template
+    name: "Switch Error"
+    id: switch_error
+    device_class: problem
+    icon: "mdi:toggle-switch-off"
+    entity_category: diagnostic
+    lambda: |-
+      return (id(status_word_raw) & 1024) != 0;
+
+  # Summer Bypass Active
+  - platform: template
+    name: "Summer Bypass Active"
+    id: summer_bypass_active
+    icon: "mdi:weather-sunny"
+    lambda: |-
+      return id(summer_bypass_state);
+
+  # SummerBoost Enabled
+  - platform: template
+    name: "SummerBoost Enabled"
+    id: summerboost_enabled
+    icon: "mdi:weather-sunny-alert"
+    lambda: |-
+      return !id(summerboost_disabled_state);
+
+  # Communication Active
+  - platform: template
+    name: "MVHR Communication"
+    id: comm_active
+    device_class: connectivity
+    icon: "mdi:connection"
+    lambda: |-
+      return (millis() - id(last_rx_time)) < 30000;
+
+  # Connection Status
+  - platform: status
+    name: "ESP Status"
+
+# =============================================================================
+# Switches for Speed Control
+# =============================================================================
 switch:
+  # Speed 1 (Trickle)
   - platform: template
+    name: "Fan Speed 1 (Trickle)"
     id: fan_speed_1
-    name: "Fan Speed 1"
+    icon: "mdi:fan-speed-1"
+    optimistic: false
     lambda: |-
-      return id(fan_speed).state == 1;
+      return id(speed1_state);
     turn_on_action:
-      - uart.write: "1510+00001\r\n"
+      - script.execute:
+          id: send_write_command
+          address: "151"
+          value: 1
+      - delay: 300ms
+      - script.execute:
+          id: send_read_command
+          address: "151"
     turn_off_action:
-      - uart.write: "1510+00000\r\n"
+      - script.execute:
+          id: send_write_command
+          address: "151"
+          value: 0
+      - delay: 300ms
+      - script.execute:
+          id: send_read_command
+          address: "151"
 
+  # Speed 3 (Boost)
   - platform: template
+    name: "Fan Speed 3 (Boost)"
     id: fan_speed_3
-    name: "Fan Speed 3"
+    icon: "mdi:fan-speed-3"
+    optimistic: false
     lambda: |-
-      return id(fan_speed).state == 3;
+      return id(speed3_state);
     turn_on_action:
-      - uart.write: "1520+00001\r\n"
+      - script.execute:
+          id: send_write_command
+          address: "152"
+          value: 1
+      - delay: 300ms
+      - script.execute:
+          id: send_read_command
+          address: "152"
     turn_off_action:
-      - uart.write: "1520+00000\r\n"
+      - script.execute:
+          id: send_write_command
+          address: "152"
+          value: 0
+      - delay: 300ms
+      - script.execute:
+          id: send_read_command
+          address: "152"
 
+  # Speed 4 (Purge)
   - platform: template
+    name: "Fan Speed 4 (Purge)"
     id: fan_speed_4
-    name: "Fan Speed 4"
+    icon: "mdi:fan"
+    optimistic: false
     lambda: |-
-      return id(fan_speed).state == 4;
+      return id(speed4_state);
     turn_on_action:
-      - uart.write: "1540+00001\r\n"
+      - script.execute:
+          id: send_write_command
+          address: "154"
+          value: 1
+      - delay: 300ms
+      - script.execute:
+          id: send_read_command
+          address: "154"
     turn_off_action:
-      - uart.write: "1540+00000\r\n"
+      - script.execute:
+          id: send_write_command
+          address: "154"
+          value: 0
+      - delay: 300ms
+      - script.execute:
+          id: send_read_command
+          address: "154"
+
+  # Boost Inhibit (Night Mode)
+  - platform: template
+    name: "Boost Inhibit (Night Mode)"
+    id: boost_inhibit
+    icon: "mdi:sleep"
+    optimistic: false
+    lambda: |-
+      return id(boost_inhibit_state);
+    turn_on_action:
+      - script.execute:
+          id: send_write_command
+          address: "326"
+          value: 1
+      - delay: 300ms
+      - script.execute:
+          id: send_read_command
+          address: "326"
+    turn_off_action:
+      - script.execute:
+          id: send_write_command
+          address: "326"
+          value: 0
+      - delay: 300ms
+      - script.execute:
+          id: send_read_command
+          address: "326"
+
+  # Summer Bypass
+  - platform: template
+    name: "Summer Bypass"
+    id: summer_bypass
+    icon: "mdi:weather-sunny"
+    optimistic: false
+    lambda: |-
+      return id(summer_bypass_state);
+    turn_on_action:
+      - script.execute:
+          id: send_write_command
+          address: "230"
+          value: 1
+      - delay: 300ms
+      - script.execute:
+          id: send_read_command
+          address: "230"
+    turn_off_action:
+      - script.execute:
+          id: send_write_command
+          address: "230"
+          value: 0
+      - delay: 300ms
+      - script.execute:
+          id: send_read_command
+          address: "230"
+
+  # SummerBoost (INVERTED: 0=enabled, 1=disabled)
+  - platform: template
+    name: "SummerBoost"
+    id: summerboost
+    icon: "mdi:weather-sunny-alert"
+    optimistic: false
+    lambda: |-
+      return !id(summerboost_disabled_state);
+    turn_on_action:
+      - script.execute:
+          id: send_write_command
+          address: "290"
+          value: 0  # 0 = ENABLED
+      - delay: 300ms
+      - script.execute:
+          id: send_read_command
+          address: "290"
+    turn_off_action:
+      - script.execute:
+          id: send_write_command
+          address: "290"
+          value: 1  # 1 = DISABLED
+      - delay: 300ms
+      - script.execute:
+          id: send_read_command
+          address: "290"
+
+  # Restart ESP
+  - platform: restart
+    name: "Restart ESP"
+    icon: "mdi:restart"
+
+# =============================================================================
+# Buttons
+# =============================================================================
+button:
+  # Factory Reset (USE WITH CAUTION!)
+  - platform: template
+    name: "Factory Reset MVHR"
+    id: factory_reset_mvhr
+    icon: "mdi:factory"
+    entity_category: config
+    on_press:
+      - logger.log:
+          level: WARN
+          format: "FACTORY RESET REQUESTED!"
+      - script.execute:
+          id: send_write_command
+          address: "068"
+          value: 21930
+
+  # Refresh all sensors
+  - platform: template
+    name: "Refresh All Sensors"
+    id: refresh_all
+    icon: "mdi:refresh"
+    entity_category: diagnostic
+    on_press:
+      - script.execute: poll_all_sensors
+
+  # Reset communication counters
+  - platform: template
+    name: "Reset Comm Counters"
+    id: reset_counters
+    icon: "mdi:counter"
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          id(successful_polls) = 0;
+          id(failed_polls) = 0;
+
+# =============================================================================
+# Text Sensors
+# =============================================================================
+text_sensor:
+  # Current Fan Speed
+  - platform: template
+    name: "Current Fan Speed"
+    id: current_fan_speed
+    icon: "mdi:fan"
+    lambda: |-
+      if (id(speed4_state)) return std::string("Speed 4 (Purge)");
+      if (id(speed3_state)) return std::string("Speed 3 (Boost)");
+      if (id(speed1_state)) return std::string("Speed 1 (Trickle)");
+      return std::string("Speed 2 (Normal)");
+    update_interval: 5s
+
+  # Operating Mode
+  - platform: template
+    name: "Operating Mode"
+    id: operating_mode
+    icon: "mdi:cog"
+    lambda: |-
+      std::string mode = "";
+      
+      if (id(speed4_state)) mode = "Purge";
+      else if (id(speed3_state)) mode = "Boost";
+      else if (id(speed1_state)) mode = "Trickle";
+      else mode = "Normal";
+      
+      if (id(boost_inhibit_state)) mode += " [Night]";
+      if (id(summer_bypass_state)) mode += " [Bypass]";
+      if (!id(summerboost_disabled_state)) mode += " [Summer]";
+      
+      return mode;
+    update_interval: 5s
+
+  # System info
+  - platform: version
+    name: "ESPHome Version"
+
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+    ssid:
+      name: "Connected SSID"
+    mac_address:
+      name: "MAC Address"
+
+# =============================================================================
+# Fan Speed Selector
+# =============================================================================
+select:
+  - platform: template
+    name: "Fan Speed"
+    id: fan_speed_select
+    icon: "mdi:fan"
+    options:
+      - "Speed 1 (Trickle)"
+      - "Speed 2 (Normal)"
+      - "Speed 3 (Boost)"
+      - "Speed 4 (Purge)"
+    optimistic: false
+    lambda: |-
+      if (id(speed4_state)) return std::string("Speed 4 (Purge)");
+      if (id(speed3_state)) return std::string("Speed 3 (Boost)");
+      if (id(speed1_state)) return std::string("Speed 1 (Trickle)");
+      return std::string("Speed 2 (Normal)");
+    set_action:
+      - lambda: |-
+          ESP_LOGI("mvhr", "Setting fan speed: %s", x.c_str());
+      # Clear all speed overrides first
+      - script.execute:
+          id: send_write_command
+          address: "151"
+          value: 0
+      - delay: 250ms
+      - script.execute:
+          id: send_write_command
+          address: "152"
+          value: 0
+      - delay: 250ms
+      - script.execute:
+          id: send_write_command
+          address: "154"
+          value: 0
+      - delay: 250ms
+      # Set requested speed
+      - if:
+          condition:
+            lambda: 'return x == "Speed 1 (Trickle)";'
+          then:
+            - script.execute:
+                id: send_write_command
+                address: "151"
+                value: 1
+      - if:
+          condition:
+            lambda: 'return x == "Speed 3 (Boost)";'
+          then:
+            - script.execute:
+                id: send_write_command
+                address: "152"
+                value: 1
+      - if:
+          condition:
+            lambda: 'return x == "Speed 4 (Purge)";'
+          then:
+            - script.execute:
+                id: send_write_command
+                address: "154"
+                value: 1
+      # Read back all speed states to confirm
+      - delay: 250ms
+      - script.execute:
+          id: send_read_command
+          address: "151"
+      - delay: 250ms
+      - script.execute:
+          id: send_read_command
+          address: "152"
+      - delay: 250ms
+      - script.execute:
+          id: send_read_command
+          address: "154"
+
+# =============================================================================
+# Number inputs for future expansion (humidity threshold, etc.)
+# =============================================================================
+# These could be added later for setting humidity boost threshold, 
+# filter replacement period, etc.
