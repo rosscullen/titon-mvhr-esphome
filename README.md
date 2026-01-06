@@ -240,6 +240,7 @@ The MVHR uses a "fastest speed wins" priority system:
 ## Whats not working (so far)
 - I find that when I press the boost button around our house, the project isn't updating the sensor of current speed. I need to investigate this further.
 - The filter remaining schedule - i'm not convinced mine is accurate. I need to investigate further whether the "remaining days" value is something that is managed from the MVHR BMS controller/mainboard, or it is something managed on the Auramode (and similar) control panel.
+
 There are other items which probably are not required but will review accordingly. There are lots of comments left within the YAML file to explain what each section relates to.
 
 ## Troubleshooting
@@ -280,7 +281,8 @@ logger:
 ## Home Assistant Automations
 Below are an initial set of Home Assistant Automations to leverage the power of having Home Assistant integrated with your Titon/Beam MVHR system.
 
-### Example: Night Mode Schedule - This will ensure that the system does not turn up the speed during the night and not disturb your sleep.
+### Example: Night Mode Schedule
+This will ensure that the system does not turn up the speed during the night and not disturb your sleep.
 
 ```yaml
 automation:
@@ -301,7 +303,8 @@ automation:
         entity_id: switch.boost_inhibit_night_mode
 ```
 
-### Example: Humidity-Based Boost - in this example, if your humidity goes above 70, fan speed 3 (boost) will kick in.
+### Example: Humidity-Based Boost
+In this example, if your humidity goes above 70, fan speed 3 (boost) will kick in.
 
 ```yaml
 automation:
