@@ -22,7 +22,7 @@ This project/repository is something I have put together in my limited spare tim
 
 ## Background & introduction
 
-Our story begins in August 2022 when I posted on the Home Assistant forum ( https://community.home-assistant.io/t/heat-recovery-mvhr-integration-titon-beam-in-ireland-mechanical-ventilation-with-heat-recovery/454942/22 ) on whether anyone has an integration for Titon (or sold as Beam in Ireland) Mechanical Ventilation with Heat Recovery (MVHR).
+Our story begins in August 2022 when I [posted on the Home Assistant forum](https://community.home-assistant.io/t/heat-recovery-mvhr-integration-titon-beam-in-ireland-mechanical-ventilation-with-heat-recovery/454942/22) on whether anyone has an integration for Titon (or sold as Beam in Ireland) Mechanical Ventilation with Heat Recovery (MVHR).
 I didn't have much responses, other than one or two others looking for similar. I managed to get a command line to the unit via a USB to RS485 adaptor and was able to understand some of the concepts using a manual from the vendor.
 
 After much playing around with it via direct serial, I found the serial bus always crashing (within Home Assistant) if there was a clash with data coming from the MVHR's Auramode Controller, so I decided in early 2025 to go with a D1 Mini and a TTL (UART) to RS485 Module.
