@@ -19,6 +19,7 @@ This project/repository is something I have put together in my limited spare tim
 - **Status Monitoring**: Engine running status, filter remaining time, runtime hours
 - **Error Detection**: Monitor for fan errors, thermistor errors, EEPROM errors, and more
 - **Heat Recovery Efficiency**: Calculated efficiency based on temperature readings (a work in progress!)
+- **Home Assistant Dashboard Card**: Monitor all the main aspects of your MVHR unit at a glance using our dashboard card (lovelace) template
 
 ## Background & introduction
 
@@ -50,7 +51,7 @@ I have not printed either of these yet but upon initial review, I suggest the fo
 ### Wiring Diagram
 Below is an image for reference (its from a different product repurposed). At a later stage, I will try and upload a specific image of how it all looks when connected to the Titon MHVR unit. On the D1 mini, you can probably use different GPIO pins but I suggest sticking with the below so you can copy the code verbatim (I think there was a reason using these GPIO pins previously but need to confirm).
 
-[![Diagram](https://github.com/rosscullen/titon-mvhr-esphome/blob/main/images/rs485-ttl-d1-mini-titon-mvhr-controller-schematics.jpg)]
+[Diagram](https://github.com/rosscullen/titon-mvhr-esphome/blob/main/images/rs485-ttl-d1-mini-titon-mvhr-controller-schematics.jpg)
 
 ```
 D1 Mini          RS-485 Converter          Titon MVHR (J9)
@@ -241,6 +242,56 @@ The MVHR uses a "fastest speed wins" priority system:
 - If an external boost switch holds the unit at Speed 3, setting Speed 1 via serial will have no effect
 - The highest requested speed from any source will be active
 
+##  Home Assistant Dashboard Card
+Its a work in progress but I have put together a nice picture card for Home Assistant, so you can see all the essential sensors.  
+- **Note:** in my example graphic below, I currently have 2 faulty sensors (hence why 2 values result in "unknown"!).
+- **Note 2:** Copy of my template graphic in the repository for reference.
+[Sample Card and code](https://github.com/rosscullen/titon-mvhr-esphome/blob/main/images/home-assistant-titon-dashboard-card.jpg)
+
+```yaml
+type: picture-elements
+elements:
+  - type: state-label
+    style:
+      top: 33%
+      left: 26%
+    entity: sensor.titon_mvhr_fresh_air_in_temperature
+    title: Fresh Air in Temperature
+  - type: state-label
+    entity: sensor.titon_mvhr_stale_air_in_temperature
+    style:
+      top: 33%
+      left: 77%
+    title: Stale Air in Temperature
+  - type: state-label
+    entity: sensor.titon_mvhr_internal_humidity
+    style:
+      top: 33%
+      left: 50%
+      color: black
+    title: Humidity
+    prefix: "Humidity: "
+  - type: state-label
+    style:
+      top: 45%
+      left: 15%
+      color: white
+    entity: sensor.titon_mvhr_stale_air_out_temperature
+    title: Stale Air Out Temperature
+  - type: state-label
+    style:
+      left: 50%
+      top: 90%
+    entity: sensor.titon_mvhr_current_fan_speed
+    prefix: "Fan Speed: "
+  - type: state-label
+    style:
+      left: 50%
+      top: 22.5%
+    entity: binary_sensor.titon_mvhr_engine_running
+    prefix: "Engine: "
+image: **link-to-graphic/titon-mvhr-picture-card-template-blank.png**
+```
 
 ## Whats not working (so far)
 - I find that when I press the boost button around our house, the project isn't updating the sensor of current speed. I need to investigate this further.
