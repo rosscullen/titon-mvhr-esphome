@@ -40,7 +40,12 @@ Here we go! ...
 | 2-wire cable | Connection between RS-485 converter and MVHR J9 port, mounted on the top of the Titon MVHR unit (few screws need to be remoted |
 | Home Assistant | To get real value out of this, I assume you are using Home Assistant... if not, I highly recommend you do so |
 | ESPHome Device Builder Add-on for Home Assistant | For this project, I am using the ESPHome Device Builder Add-on for Home Assistant |
-| 3d Printed Case | There are a number of 3D printed cases available which house both the D1 Mini and the RS485 board. I will try to make recommendations here in future |
+| 3d Printed Case | There are a number of 3D printed cases available which house both the D1 Mini and the RS485 board. I have listed 2 in the next section below |
+
+### 3D Case (to house D1 mini and UART to RS-485 Converter)
+I have not printed either of these yet but upon initial review, I suggest the following:
+[DIN rail mounting Case (via Printables)](https://www.printables.com/model/405333-esp-wemos-d1-mini-and-rs485-ttl-adapter-mounting-c)
+[Non-DIN mounted Case (via Maker World)](https://makerworld.com/en/models/510708-wemos-d1-esp32-case-for-esphome-for-deye#profileId-426791)
 
 ### Wiring Diagram
 Below is an image for reference (its from a different product repurposed). At a later stage, I will try and upload a specific image of how it all looks when connected to the Titon MHVR unit. On the D1 mini, you can probably use different GPIO pins but I suggest sticking with the below so you can copy the code verbatim (I think there was a reason using these GPIO pins previously but need to confirm).
