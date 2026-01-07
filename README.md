@@ -246,7 +246,7 @@ The MVHR uses a "fastest speed wins" priority system:
 Its a work in progress but I have put together a nice picture card for Home Assistant, so you can see all the essential sensors.  
 - **Note:** in my example graphic below, I currently have 2 faulty sensors (hence why 2 values result in "unknown"!).
 - **Note 2:** Copy of my template graphic in the repository for reference.
-[Sample Card and code](https://github.com/rosscullen/titon-mvhr-esphome/blob/main/images/home-assistant-titon-dashboard-card.jpg)
+[![Sample Card and code](https://github.com/rosscullen/titon-mvhr-esphome/blob/main/images/home-assistant-titon-dashboard-card.jpg)]
 
 ```yaml
 type: picture-elements
