@@ -44,8 +44,8 @@ Here we go! ...
 
 ### 3D Case (to house D1 mini and UART to RS-485 Converter)
 I have not printed either of these yet but upon initial review, I suggest the following:
-[DIN rail mounting Case (via Printables)](https://www.printables.com/model/405333-esp-wemos-d1-mini-and-rs485-ttl-adapter-mounting-c)
-[Non-DIN mounted Case (via Maker World)](https://makerworld.com/en/models/510708-wemos-d1-esp32-case-for-esphome-for-deye#profileId-426791)
+ - [DIN rail mounting Case (via Printables)](https://www.printables.com/model/405333-esp-wemos-d1-mini-and-rs485-ttl-adapter-mounting-c)
+ - [Non-DIN mounted Case (via Maker World)](https://makerworld.com/en/models/510708-wemos-d1-esp32-case-for-esphome-for-deye#profileId-426791)
 
 ### Wiring Diagram
 Below is an image for reference (its from a different product repurposed). At a later stage, I will try and upload a specific image of how it all looks when connected to the Titon MHVR unit. On the D1 mini, you can probably use different GPIO pins but I suggest sticking with the below so you can copy the code verbatim (I think there was a reason using these GPIO pins previously but need to confirm).
