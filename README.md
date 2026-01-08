@@ -6,8 +6,23 @@
 
 Control and monitor your Titon MVHR (Mechanical Ventilation with Heat Recovery) unit via Home Assistant using ESPHome and a D1 Mini with RS-485 adapter.
 
-## Disclaimer
-This project/repository is something I have put together in my limited spare time. I am using AI initially to generate the logic in the YAML config file and when possible, I am reviewing the code to interrogate the logic being applied and testing the functionality is working as it should. While I welcome issues and will do my best to answer in my spare time, I am encouraging others to contribute to the YAML file and make this a better project for all that may wish to use it!
+## Table of Contents
+
+- [Features](#features)
+- [Prerequisites](#prerequisites)
+- [Hardware Requirements](#hardware-requirements)
+- [Wiring Diagram](#wiring-diagram)
+- [Communication Protocol](#communication-protocol)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Summer Bypass & SUMMERboost](#summer-bypass--summerboost)
+- [Home Assistant Dashboard Card](#home-assistant-dashboard-card)
+- [Known Limitations](#known-limitations)
+- [Troubleshooting](#troubleshooting)
+- [Home Assistant Automations](#home-assistant-automations)
+- [Contributing](#contributing)
+- [Acknowledgments](#acknowledgments)
+- [References](#references)
 
 ## Features
 
@@ -19,39 +34,44 @@ This project/repository is something I have put together in my limited spare tim
 - **Status Monitoring**: Engine running status, filter remaining time, runtime hours
 - **Error Detection**: Monitor for fan errors, thermistor errors, EEPROM errors, and more
 - **Heat Recovery Efficiency**: Calculated efficiency based on temperature readings (a work in progress!)
-- **Home Assistant Dashboard Card**: Monitor all the main aspects of your MVHR unit at a glance using our dashboard card (lovelace) template
+- **Home Assistant Dashboard Card**: Monitor all the main aspects of your MVHR unit at a glance using our dashboard card (Lovelace) template
 
-## Background & introduction
+## Background & Introduction
 
-Our story begins in August 2022 when I [posted on the Home Assistant forum](https://community.home-assistant.io/t/heat-recovery-mvhr-integration-titon-beam-in-ireland-mechanical-ventilation-with-heat-recovery/454942/22) on whether anyone has an integration for Titon (or sold as Beam in Ireland) Mechanical Ventilation with Heat Recovery (MVHR).
-I didn't have much responses, other than one or two others looking for similar. I managed to get a command line to the unit via a USB to RS485 adaptor and was able to understand some of the concepts using a manual from the vendor.
+This project started in August 2022 when I [posted on the Home Assistant forum](https://community.home-assistant.io/t/heat-recovery-mvhr-integration-titon-beam-in-ireland-mechanical-ventilation-with-heat-recovery/454942/22) asking whether anyone had an integration for Titon (sold as Beam in Ireland) MVHR systems.
 
-After much playing around with it via direct serial, I found the serial bus always crashing (within Home Assistant) if there was a clash with data coming from the MVHR's Auramode Controller, so I decided in early 2025 to go with a D1 Mini and a TTL (UART) to RS485 Module.
-Its been a busy year (2025) and I had done very little with it... but its a new year (Jan 2026 that I write this), so here's take two!
+After experimenting with direct serial communication via USB to RS-485, I found the serial bus would crash within Home Assistant when there was a clash with data from the MVHR's Auramode Controller. In early 2025, I decided to use a D1 Mini with a TTL (UART) to RS-485 module instead. Now in January 2026, here's the result!
 
-Here we go! ...
+## Prerequisites
 
-## Hardware (and other) Requirements
+- Home Assistant (2024.1 or later recommended)
+- ESPHome Device Builder Add-on installed in Home Assistant
+- Basic soldering skills for wiring connections
+- Familiarity with ESPHome device setup
+
+## Hardware Requirements
 
 | Component | Description |
 |-----------|-------------|
 | D1 Mini (ESP8266) | Main microcontroller - I used a generic model from AliExpress which worked fine |
-| UART to RS-485 Converter | For serial communication with MVHR - again another AliExpress purchase|
-| Titon MVHR Unit | Compatible with BMS protocol - the Model I have is Titon HRV10M Q+ (TP481B) the B being the key distinction or TPxxxB/BC/BE Units |
-| 2-wire cable | Connection between RS-485 converter and MVHR J9 port, mounted on the top of the Titon MVHR unit (few screws need to be remoted |
-| Home Assistant | To get real value out of this, I assume you are using Home Assistant... if not, I highly recommend you do so |
-| ESPHome Device Builder Add-on for Home Assistant | For this project, I am using the ESPHome Device Builder Add-on for Home Assistant |
-| 3d Printed Case | There are a number of 3D printed cases available which house both the D1 Mini and the RS485 board. I have listed 2 in the next section below |
+| UART to RS-485 Converter | For serial communication with MVHR - another AliExpress purchase |
+| Titon MVHR Unit | Compatible with BMS protocol - the model I have is Titon HRV10M Q+ (TP481B). The "B" is the key distinction for TPxxxB/BC/BE units |
+| 2-wire cable | Connection between RS-485 converter and MVHR J9 port, mounted on the top of the Titon MVHR unit (a few screws need to be removed) |
+| Home Assistant | To get real value out of this, I assume you are using Home Assistant - if not, I highly recommend it! |
+| 3D Printed Case | There are a number of 3D printed cases available which house both the D1 Mini and the RS-485 board. See options below |
 
-### 3D Case (to house D1 mini and UART to RS-485 Converter)
+### 3D Case Options
+
 I have not printed either of these yet but upon initial review, I suggest the following:
- - [DIN rail mounting Case (via Printables)](https://www.printables.com/model/405333-esp-wemos-d1-mini-and-rs485-ttl-adapter-mounting-c)
- - [Non-DIN mounted Case (via Maker World)](https://makerworld.com/en/models/510708-wemos-d1-esp32-case-for-esphome-for-deye#profileId-426791)
 
-### Wiring Diagram
-Below is an image for reference (its from a different product repurposed). At a later stage, I will try and upload a specific image of how it all looks when connected to the Titon MHVR unit. On the D1 mini, you can probably use different GPIO pins but I suggest sticking with the below so you can copy the code verbatim (I think there was a reason using these GPIO pins previously but need to confirm).
+- [DIN rail mounting Case (via Printables)](https://www.printables.com/model/405333-esp-wemos-d1-mini-and-rs485-ttl-adapter-mounting-c)
+- [Non-DIN mounted Case (via Maker World)](https://makerworld.com/en/models/510708-wemos-d1-esp32-case-for-esphome-for-deye#profileId-426791)
 
-[Diagram](https://github.com/rosscullen/titon-mvhr-esphome/blob/main/images/rs485-ttl-d1-mini-titon-mvhr-controller-schematics.jpg)
+## Wiring Diagram
+
+Below is a reference diagram (repurposed from a different product). At a later stage, I will upload a specific image showing how it all looks when connected to the Titon MVHR unit. On the D1 Mini, you can probably use different GPIO pins but I suggest sticking with the below so you can copy the code verbatim.
+
+![Wiring Diagram](images/rs485-ttl-d1-mini-titon-mvhr-controller-schematics.jpg)
 
 ```
 D1 Mini          RS-485 Converter          Titon MVHR (J9)
@@ -64,14 +84,15 @@ GND        ----> GND
                  B  ------------------>    B
 ```
 
-> **Note**: The 12V terminal on the Titon MHVR unit board typically powers the units display controllers (such as the aurastat controller that I use). You only need the A & B terminals to your RS485 board (A to A, and B to B) - do not directly connect this 12V to try and power the D1 Mini. There is probably a way to power the D1 mini from the MVHR unit but that is out of scope for this project. For now, i'm just poweing it using a USB cable and an old usb phone adaptor.
+> **Note**: The 12V terminal on the Titon MVHR unit board typically powers the unit's display controllers (such as the Auramode controller that I use). You only need the A & B terminals connected to your RS-485 board (A to A, and B to B) - do not directly connect this 12V to try and power the D1 Mini. There is probably a way to power the D1 Mini from the MVHR unit but that is out of scope for this project. For now, I'm just powering it using a USB cable and an old USB phone adapter.
 
-## Note regarding existing displays or controllers
-I use the Titon Auramode Controller (others are available including the auralite HRV but I would find that the RS485 bus would be busy with the polling (chattering) between it and the BMS controller, causing clahes with data sending/receiving, as I believe its only half-duplex. I would find that observing the bus using a USB to RS485 adapter, shows a lot of chatter **SO I HIGHLY RECOMMEND DISCONNECTING THE EXISTING DISPLAY CONTROLLER** to ensure you have reliability. That's not to say that you may wish to plug it your existing controller in every now and than. 
+## Note Regarding Existing Displays or Controllers
+
+I use the Titon Auramode Controller (others are available including the Auralite HRV) but I found that the RS-485 bus would be busy with the polling (chattering) between it and the BMS controller, causing clashes with data sending/receiving, as I believe it's only half-duplex. Observing the bus using a USB to RS-485 adapter shows a lot of chatter, **SO I HIGHLY RECOMMEND DISCONNECTING THE EXISTING DISPLAY CONTROLLER** to ensure reliability. That's not to say that you may wish to plug in your existing controller now and then.
 
 ## Communication Protocol
 
-The Titon MVHR uses a proprietary RS-485 protocol (but note it does not use Modbus):
+The Titon MVHR uses a proprietary RS-485 protocol (note: it does not use Modbus):
 
 | Parameter | Value |
 |-----------|-------|
@@ -83,7 +104,8 @@ The Titon MVHR uses a proprietary RS-485 protocol (but note it does not use Modb
 
 ### Command Format
 
-Below are some technical details (thanks to Titon BMS Manual) on how the system communicates with the Titon BMS Controller. You don't need to worry too much about this in order to get going, it just might be useful for those who want to understand the 'how' and 'why', and who may wish to contribute/fork this repository at a later stage.
+Below are some technical details (thanks to the Titon BMS Manual) on how the system communicates with the Titon BMS Controller. You don't need to worry too much about this to get going - it's just useful for those who want to understand the "how" and "why", and who may wish to contribute or fork this repository.
+
 **Read Command (12 bytes):**
 ```
 AAA1+00000\r\n
@@ -116,7 +138,7 @@ AAA+DDDDD\r\n
 | 152 | Speed 3 Switch | Write 1=ON, 0=OFF |
 | 154 | Speed 4 Switch | Write 1=ON, 0=OFF |
 | 230 | Summer Bypass | Write 1=Enable, 0=Disable |
-| 290 | SUMMERboost | Write 0=Enable, 1=Disable |
+| 290 | SUMMERboost | Write 0=Enable, 1=Disable (note: inverted logic) |
 | 326 | Boost Inhibit | Write 1=Enable, 0=Disable |
 | 341 | Filter Remaining | Hours until filter change |
 
@@ -147,13 +169,15 @@ The status word is a 16-bit value where each bit indicates a specific status:
 
 ## Installation
 
-### 1. upload and compile the YAML code (refer to YAML file in this repository) 
-Upload YAML to your D1 mini microcontroller using the ESPhome Device Builder Add-on for Home Assistant.
-There are plenty of guides in setting up ESPhome devices such as the D1 Mini online or via the ESPHome website. I would suggest creating a new device via the ESPHome Device Builder menu item in Home Assistant. Once you have it established with basic code and connectivity, then edit the device and copy/Paste in the code into the newly created device. Be sure to tweak it to your specific details (hostname, wifi etc).
+### 1. Upload and Compile the YAML Code
+
+Upload the YAML file from this repository to your D1 Mini microcontroller using the ESPHome Device Builder Add-on for Home Assistant.
+
+There are plenty of guides for setting up ESPHome devices such as the D1 Mini online or via the ESPHome website. I suggest creating a new device via the ESPHome Device Builder menu item in Home Assistant. Once you have it established with basic code and connectivity, edit the device and copy/paste in the code from this repository. Be sure to tweak it to your specific details (hostname, WiFi, etc.).
 
 ### 2. Create Secrets File
 
-With any ESPHome project, I recommend creating a `secrets.yaml` file in your ESPHome directory, so your not always exposing your WiFi SSID and Password directly in your project YAML file:
+With any ESPHome project, I recommend creating a `secrets.yaml` file in your ESPHome directory so you're not always exposing your WiFi SSID and password directly in your project YAML file:
 
 ```yaml
 wifi_ssid: "your_wifi_ssid"
@@ -161,17 +185,18 @@ wifi_password: "your_wifi_password"
 ```
 
 ### 3. Compile and Upload
-Once everything is reviewed and auto validated in ESPHome, upload your new code (wirelessly or directly via USB) to your D1 mini as per the regular upload process (again, if you haven't done this before, there are numerous online tutorials which walk you through the process).
+
+Once everything is reviewed and auto-validated in ESPHome, upload your new code (wirelessly or directly via USB) to your D1 Mini as per the regular upload process (again, if you haven't done this before, there are numerous online tutorials which walk you through the process).
 
 ### 4. Add to Home Assistant
 
-The device will be automatically discovered by Home Assistant. Navigate to **Settings → Devices & Services → ESPHome ** in order to view and configure your new Titon MVHR controller using ESPHome and Home Assistant! 
+The device will be automatically discovered by Home Assistant. Navigate to **Settings → Devices & Services → ESPHome** to view and configure your new Titon MVHR controller!
 
 ## Configuration
 
 ### Basic Configuration
 
-The YAML configuration included in this Github respository includes some of the following which you can tweak accordingly, but I recommend the below settings for simplicity:
+The YAML configuration included in this GitHub repository includes the following which you can tweak accordingly, but I recommend the below settings for simplicity:
 
 ```yaml
 esphome:
@@ -191,7 +216,7 @@ uart:
   stop_bits: 1
 ```
 
-### Available default Entities
+### Available Entities
 
 #### Sensors
 - Stale Air In Temperature
@@ -220,9 +245,14 @@ uart:
 - Fan Speed 3 (Boost)
 - Fan Speed 4 (Purge)
 - Boost Inhibit (Night Mode)
+- Summer Bypass (planned)
+- SUMMERboost (planned)
+
+#### Text Sensors
+- Current Fan Speed
 
 #### Selects
-- Fan Speed (dropdown selector) - this needs work. Note that Fan Speed 2 typicall isn't an option as it's usually the default state. i.e. if you were in "Fan speed 3" and you turn this switch off, it will go to what is Fan Speed 2.
+- Fan Speed (dropdown selector) - this needs work. Note that Fan Speed 2 typically isn't an option as it's the default state (i.e., if you're in "Fan Speed 3" and turn this switch off, it will go to Fan Speed 2).
 
 #### Buttons
 - Poll Sensors Now
@@ -231,10 +261,12 @@ uart:
 ## Summer Bypass & SUMMERboost
 
 ### Summer Bypass
-Diverts incoming fresh air around the heat exchanger to bring in cooler outside air (bypasses heat recovery). Useful for cooling your home with cooler air during the summer. I cannot say how effective this function is in general on a MVHR unit but better than nothing I guess!
+Diverts incoming fresh air around the heat exchanger to bring in cooler outside air (bypasses heat recovery). Useful for cooling your home with cooler air during the summer. I cannot say how effective this function is in general on an MVHR unit but better than nothing I guess!
 
 ### SUMMERboost
 Runs both supply and extract fans at high speed (Speed 4) for maximum fresh air exchange. Only activates when Summer Bypass is active.
+
+> **Tip**: If you want independent control of SUMMERboost, disable it (write 1 to address 290) and use address 154 to control Speed 4 directly.
 
 ## Fan Speed Priority
 
@@ -242,11 +274,14 @@ The MVHR uses a "fastest speed wins" priority system:
 - If an external boost switch holds the unit at Speed 3, setting Speed 1 via serial will have no effect
 - The highest requested speed from any source will be active
 
-##  Home Assistant Dashboard Card
-Its a work in progress but I have put together a nice picture card for Home Assistant, so you can see all the essential sensors.  
-- **Note:** in my example graphic below, I currently have 2 faulty sensors (hence why 2 values result in "unknown"!).
-- **Note 2:** Copy of my template graphic in the repository for reference.
-[![Sample Card and code](https://github.com/rosscullen/titon-mvhr-esphome/blob/main/images/home-assistant-titon-dashboard-card.jpg)]
+## Home Assistant Dashboard Card
+
+It's a work in progress but I have put together a nice picture card for Home Assistant, so you can see all the essential sensors.
+
+- **Note:** In my example graphic below, I currently have 2 faulty sensors (hence why 2 values show as "unknown"!).
+- **Note 2:** A copy of my template graphic is in the repository for reference.
+
+![Sample Card](images/home-assistant-titon-dashboard-card.jpg)
 
 ```yaml
 type: picture-elements
@@ -290,22 +325,25 @@ elements:
       top: 22.5%
     entity: binary_sensor.titon_mvhr_engine_running
     prefix: "Engine: "
-image: **link-to-graphic/titon-mvhr-picture-card-template-blank.png**
+image: /local/images/titon-mvhr-picture-card-template-blank.png
 ```
 
-## Whats not working (so far)
-- I find that when I press the boost button around our house, the project isn't updating the sensor of current speed. I need to investigate this further.
-- The filter remaining schedule - i'm not convinced mine is accurate. I need to investigate further whether the "remaining days" value is something that is managed from the MVHR BMS controller/mainboard, or it is something managed on the Auramode (and similar) control panel.
+> **Note**: Update the `image` path to match where you store the background image in your Home Assistant configuration.
 
-There are other items which probably are not required but will review accordingly. There are lots of comments left within the YAML file to explain what each section relates to.
+## Known Limitations
+
+- **Boost button detection**: When pressing the physical boost button around the house, the project isn't updating the current speed sensor. This needs further investigation.
+- **Filter remaining schedule**: I'm not convinced mine is accurate. I need to investigate further whether the "remaining days" value is something managed by the MVHR BMS controller/mainboard, or if it's managed by the Auramode (and similar) control panel.
+
+There are other items which probably are not required but will be reviewed accordingly. There are lots of comments left within the YAML file to explain what each section relates to.
 
 ## Troubleshooting
 
 ### No Response from MVHR
 
-1. **Check wiring**: Ensure A/B lines are correctly connected (try swapping if no response). Suggest using the logging (details below further to enable logging) so you can see what commands are being sent and received. The YAML file is configured to ensure these messages are presented in a human readable format for ease of diagnosing issues.
+1. **Check wiring**: Ensure A/B lines are correctly connected (try swapping if no response). Use the logging (details below) so you can see what commands are being sent and received. The YAML file is configured to ensure these messages are presented in a human-readable format for ease of diagnosing issues.
 2. **Verify baud rate**: Must be exactly 1200
-3. **Check for bus contention**: If using aurastat or other controller, it has continuous communication - polling may conflict
+3. **Check for bus contention**: If using Auramode or other controller, it has continuous communication - polling may conflict
 
 ### Error Response (999/-99999)
 
@@ -313,17 +351,17 @@ This indicates an invalid address or communication error. Verify:
 - Address exists in the protocol table
 - Command format is exactly 12 bytes
 - CR+LF terminators are present
-- In my MVHR unit, it transpires that 2 of my temperature sensors were responding with -99999 (via the ESPHome logs - reply messages). The guys on the Titon tech team suggested that I temporarily fitted a 10K resistor in the Temperature positions on the titon PCB (which should return a response of roughly “031+00250" or around 25 Degrees)... and they were right. Which indicated to me that my unit currently has 2 faulty temperature sensors :-(
+- In my MVHR unit, it transpires that 2 of my temperature sensors were responding with -99999 (via the ESPHome logs - reply messages). The guys on the Titon tech team suggested that I temporarily fitted a 10K resistor in the temperature positions on the Titon PCB (which should return a response of roughly "031+00250" or around 25 degrees) - and they were right. This indicated to me that my unit currently has 2 faulty temperature sensors :-(
 
 ### Intermittent Communication
 
-- The aurastat controller (and others i'm sure) have almost continuous communication with the MVHR. Again I recommend disconnecting to ensure more reliable performance.
-- If you insist on having it connected, you may need to Implement delays between commands to avoid bus contention (I need to check code again to see if I left some of this logic in from previous versions, where I tried to run both in parallel)
+- The Auramode controller (and others I'm sure) has almost continuous communication with the MVHR. Again, I recommend disconnecting to ensure more reliable performance.
+- If you insist on having it connected, you may need to implement delays between commands to avoid bus contention (I need to check the code again to see if I left some of this logic in from previous versions, where I tried to run both in parallel).
 - Consider longer polling intervals (5+ seconds)
 
 ### Debug Logging
 
-Enabling debug logging in your ESPHome YAML file allows you to see raw communication - i.e. messages being sent to Titon BMS controller and responses being sent (which are formatted in an easy to read format):
+Enabling debug logging in your ESPHome YAML file allows you to see raw communication - i.e., messages being sent to the Titon BMS controller and responses being received (which are formatted in an easy-to-read format):
 
 ```yaml
 logger:
@@ -335,10 +373,12 @@ logger:
 ```
 
 ## Home Assistant Automations
-Below are an initial set of Home Assistant Automations to leverage the power of having Home Assistant integrated with your Titon/Beam MVHR system.
+
+Below are some example Home Assistant automations to leverage the power of having Home Assistant integrated with your Titon/Beam MVHR system.
 
 ### Example: Night Mode Schedule
-This will ensure that the system does not turn up the speed during the night and not disturb your sleep.
+
+This will ensure that the system does not turn up the speed during the night and disturb your sleep.
 
 ```yaml
 automation:
@@ -348,7 +388,7 @@ automation:
         at: "22:00:00"
     action:
       - service: switch.turn_on
-        entity_id: switch.boost_inhibit_night_mode
+        entity_id: switch.titon_mvhr_boost_inhibit_night_mode
 
   - alias: "MVHR Day Mode"
     trigger:
@@ -356,22 +396,23 @@ automation:
         at: "07:00:00"
     action:
       - service: switch.turn_off
-        entity_id: switch.boost_inhibit_night_mode
+        entity_id: switch.titon_mvhr_boost_inhibit_night_mode
 ```
 
 ### Example: Humidity-Based Boost
-In this example, if your humidity goes above 70, fan speed 3 (boost) will kick in.
+
+In this example, if your humidity goes above 70%, Fan Speed 3 (boost) will kick in.
 
 ```yaml
 automation:
   - alias: "MVHR High Humidity Boost"
     trigger:
       - platform: numeric_state
-        entity_id: sensor.internal_humidity
+        entity_id: sensor.titon_mvhr_internal_humidity
         above: 70
     action:
       - service: switch.turn_on
-        entity_id: switch.fan_speed_3_boost
+        entity_id: switch.titon_mvhr_fan_speed_3_boost
 ```
 
 ### Example: Filter Replacement Notification
@@ -381,7 +422,7 @@ automation:
   - alias: "MVHR Filter Alert"
     trigger:
       - platform: state
-        entity_id: binary_sensor.filter_change_required
+        entity_id: binary_sensor.titon_mvhr_filter_change_required
         to: "on"
     action:
       - service: notify.mobile_app
@@ -392,28 +433,32 @@ automation:
 
 ## Contributing
 
-Contributions are very much welcomed! I hope there are others out there looking to do similar with their Titon/Beam MVHR system, therefore please feel free to submit a Pull Request or fork this repository.
+Contributions are very much welcomed! I hope there are others out there looking to do similar with their Titon/Beam MVHR system, so please feel free to submit a Pull Request or fork this repository.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details (**to do**).
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
-- The Titon Technical support team who gave me a few pointers along the way when I ran into some dead ends. Also for Titon to publish details online of how their controller communicates so it can be leverages by such projects as this!
+- The Titon Technical support team who gave me a few pointers along the way when I ran into some dead ends. Also to Titon for publishing details online of how their controller communicates so it can be leveraged by projects such as this!
 - ESPHome community for the essential building blocks to make this possible
-- Home Assistant community for the amazing home automation platform that many know and love. To see how much it has grown since my first use in 2018 in mind blowing. Keep up the great work Paulus, Frenck and team.
-- Thanks to the comments on the Home Assistant Community Forums for keeping me motivated to get to this point. I know it has a bit to go yet so it's a start I guess
-- To https://github.com/respawner for sharing his similar project written in python, that connects directly via USB -> RS485 adapter and has a HACS integration. Check it out, it might suit your needs more.
+- Home Assistant community for the amazing home automation platform that many know and love. To see how much it has grown since my first use in 2018 is mind-blowing. Keep up the great work Paulus, Frenck, and team.
+- Thanks to the comments on the Home Assistant Community Forums for keeping me motivated to get to this point. I know it has a bit to go yet so it's a start I guess!
+- To [respawner](https://github.com/respawner) for sharing a similar project written in Python that connects directly via USB → RS-485 adapter and has a HACS integration. Check it out, it might suit your needs more.
 
 ## References
 
-- [Home Assistant Community Forum(where this topic started)](https://community.home-assistant.io/t/heat-recovery-mvhr-integration-titon-beam-in-ireland-mechanical-ventilation-with-heat-recovery/454942/22)
-- [Titon Home Assistant Integration - direct USB to HA using a USB to RS485 adaptor](https://github.com/respawner/hass_titon_controller_plugin)
+- [Home Assistant Community Forum (where this topic started)](https://community.home-assistant.io/t/heat-recovery-mvhr-integration-titon-beam-in-ireland-mechanical-ventilation-with-heat-recovery/454942/22)
+- [Titon Home Assistant Integration - direct USB to HA using a USB to RS-485 adapter](https://github.com/respawner/hass_titon_controller_plugin)
 - [Titon PCB Communication Protocol for BMS Manual](http://products.titon.com/wp-content/uploads/2025/03/BM893_Iss.01_PCB_Communication_Protocal_for_BS_V1_1-ENG.pdf)
 - [ESPHome Documentation](https://esphome.io/)
 - [Home Assistant ESPHome Integration](https://www.home-assistant.io/integrations/esphome/)
 
 ---
 
-**Disclaimer**: This is an unofficial integration. Use at your own risk! Modifying ventilation system settings incorrectly could affect your warrenty, not to mention your indoor air quality!
+## Disclaimer
+
+This project is something I have put together in my limited spare time. I am using AI initially to generate the logic in the YAML config file and when possible, I am reviewing the code to interrogate the logic being applied and testing the functionality is working as it should. While I welcome issues and will do my best to answer in my spare time, I am encouraging others to contribute to the YAML file and make this a better project for all that may wish to use it!
+
+**This is an unofficial integration. Use at your own risk!** Modifying ventilation system settings incorrectly could affect your warranty, not to mention your indoor air quality!
