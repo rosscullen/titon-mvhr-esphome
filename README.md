@@ -11,6 +11,7 @@ Control and monitor your Titon MVHR (Mechanical Ventilation with Heat Recovery) 
 - [Features](#features)
 - [Prerequisites](#prerequisites)
 - [Hardware Requirements](#hardware-requirements)
+- [3D Case Options](3d-case-options)
 - [Wiring Diagram](#wiring-diagram)
 - [Communication Protocol](#communication-protocol)
 - [Installation](#installation)
@@ -60,12 +61,15 @@ After experimenting with direct serial communication via USB to RS-485, I found 
 | Home Assistant | To get real value out of this, I assume you are using Home Assistant - if not, I highly recommend it! |
 | 3D Printed Case | There are a number of 3D printed cases available which house both the D1 Mini and the RS-485 board. See options below |
 
-### 3D Case Options
+## 3D Case Options
 
 I have not printed either of these yet but upon initial review, I suggest the following:
 
 - [DIN rail mounting Case (via Printables)](https://www.printables.com/model/405333-esp-wemos-d1-mini-and-rs485-ttl-adapter-mounting-c)
 - [Non-DIN mounted Case (via Maker World)](https://makerworld.com/en/models/510708-wemos-d1-esp32-case-for-esphome-for-deye#profileId-426791)
+
+Below is an image of the hardware fully assembled within the Non-DIN case. I found out (the hard way) that it does not fit my D1 mini, so you have been warned! As you can see, I have detatable cables that can easily join with the MVHR connections but you may choose to wire these directly or another way. Also not pictured is the USB cable to power the D1 Mini (or similar ESP8266 microcontroller), which plugs in from the right hand side
+![Image of the non-DIN 3d Printed case](images//d1-mini-ESP8266-UART-RS-485-3d-printed-case.jpg)
 
 ## Wiring Diagram
 
