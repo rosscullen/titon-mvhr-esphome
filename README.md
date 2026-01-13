@@ -265,12 +265,15 @@ uart:
 ## Summer Bypass & SUMMERboost
 
 ### Summer Bypass
-Diverts incoming fresh air around the heat exchanger to bring in cooler outside air (bypasses heat recovery). Useful for cooling your home with cooler air during the summer. I cannot say how effective this function is in general on an MVHR unit but better than nothing I guess!
+This diverts incoming fresh air around the heat exchanger to bring in cooler outside air (bypasses heat recovery). Useful for cooling your home with cooler air during the summer. I cannot say how effective this function is in general on an MVHR unit but better than nothing I guess!
+The following link is a Titon Video which explains is in more detail: [Summer Bypass Video](https://www.youtube.com/watch?v=vutKbaCR4h8)
 
 ### SUMMERboost
 Runs both supply and extract fans at high speed (Speed 4) for maximum fresh air exchange. Only activates when Summer Bypass is active.
 
-> **Tip**: If you want independent control of SUMMERboost, disable it (write 1 to address 290) and use address 154 to control Speed 4 directly.
+> **Advanced Tip**: If you want independent control of SUMMERboost, disable it (write 1 to address 290) and use address 154 to control Speed 4 directly.
+
+The following Titon Video explains SUMMERBoost in more detail: [SUMMERBoost Video](https://www.youtube.com/watch?v=o39tIwFmehI)
 
 ## Fan Speed Priority
 
@@ -336,10 +339,10 @@ image: /local/images/titon-mvhr-picture-card-template-blank.png
 
 ## Known Limitations
 
-- **Boost button detection**: When pressing the physical boost button around the house, the project isn't updating the current speed sensor. This needs further investigation.
-- **Filter remaining schedule**: I'm not convinced mine is accurate. I need to investigate further whether the "remaining days" value is something managed by the MVHR BMS controller/mainboard, or if it's managed by the Auramode (and similar) control panel.
+- **Boost button detection**: When pressing the physical boost button around the house, the project isn't updating the current speed sensor. I have it working in the next version but the boost is just a software timer, antisipating when the fan will return to Normal Speed (2). Not ideal, but it works I guess. Timer can be adjusted, depending on how long your boost lasts.
+- **Filter remaining schedule**: I'm not convinced mine is accurate. I need to investigate further whether the "remaining months" value is something managed by the MVHR BMS controller/mainboard, or if it's managed by the Auramode (and similar) control panel(s).
 
-There are other items which probably are not required but will be reviewed accordingly. There are lots of comments left within the YAML file to explain what each section relates to.
+There are other items which probably are not functioning but will be reviewed in due course. There are lots of comments left within the YAML file to explain what each section relates to, so to make it easier to search what you might be looking to tweak.
 
 ## Troubleshooting
 
@@ -347,7 +350,7 @@ There are other items which probably are not required but will be reviewed accor
 
 1. **Check wiring**: Ensure A/B lines are correctly connected (try swapping if no response). Use the logging (details below) so you can see what commands are being sent and received. The YAML file is configured to ensure these messages are presented in a human-readable format for ease of diagnosing issues.
 2. **Verify baud rate**: Must be exactly 1200
-3. **Check for bus contention**: If using Auramode or other controller, it has continuous communication - polling may conflict
+3. **Check for bus contention**: If using Auramode or other controller, it has continuous communication with MVHR BMS Controller - polling may conflict and so I recommend plugging our your existing controller such as an Auamode or Auralite.
 
 ### Error Response (999/-99999)
 
@@ -359,8 +362,8 @@ This indicates an invalid address or communication error. Verify:
 
 ### Intermittent Communication
 
-- The Auramode controller (and others I'm sure) has almost continuous communication with the MVHR. Again, I recommend disconnecting to ensure more reliable performance.
-- If you insist on having it connected, you may need to implement delays between commands to avoid bus contention (I need to check the code again to see if I left some of this logic in from previous versions, where I tried to run both in parallel).
+- The Auramode controller (and others I'm sure) has almost continuous communication with the MVHR. Again, I recommend disconnecting other contollers to ensure more reliable communication.
+- If you insist on having it connected, you may need to implement delays between commands to avoid bus contention (I think I removed a lot of code code from previous versions of YAML file which looked for gaps in communication).
 - Consider longer polling intervals (5+ seconds)
 
 ### Debug Logging
